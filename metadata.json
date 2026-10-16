@@ -1,0 +1,6 @@
+{
+  "name": "SHIFT 1.0 - Beyond the Degree",
+  "description": "Worldwide Evangelism Service (WES) in partnership with UENR Student Christian Council (SCC) presents SHIFT 1.0: Building Your Career, Purpose & Legacy at UENR Sunyani.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

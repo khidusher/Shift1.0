@@ -1,0 +1,6 @@
+{
+  "summary": "Implementation plan for connecting Google AppSheet directly to Cloud Firestore as a data source for SHIFT 1.0. Covers direct Firestore-to-AppSheet synchronization, offline-capable event secretariat check-in, schema definitions, and an in-app Secretariat AppSheet Hub with one-click configuration and step-by-step onboarding.",
+  "updatedAt": "2026-10-13T10:28:53.855023923Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

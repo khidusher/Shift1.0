@@ -1,0 +1,85 @@
+{
+  "entities": {
+    "Registration": {
+      "title": "Registration",
+      "description": "Attendee registration record for SHIFT 1.0 summit",
+      "type": "object",
+      "properties": {
+        "fullName": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "academicLevel": { "type": "string" },
+        "department": { "type": "string" },
+        "passId": { "type": "string" },
+        "registeredAt": { "type": "string" },
+        "userId": { "type": "string" },
+        "sheetsSyncStatus": { "type": "string" },
+        "sheetsSyncError": { "type": "string" },
+        "sheetsSyncedAt": { "type": "string" },
+        "ticketStatus": { "type": "string" },
+        "checkedIn": { "type": "boolean" },
+        "checkedInAt": { "type": "string" },
+        "checkedInBy": { "type": "string" }
+      },
+      "required": ["fullName", "phone", "academicLevel", "passId", "registeredAt"]
+    },
+    "Inquiry": {
+      "title": "Inquiry",
+      "description": "General or attendee message sent to the secretariat",
+      "type": "object",
+      "properties": {
+        "fullName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "topic": { "type": "string" },
+        "message": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["fullName", "email", "topic", "message", "createdAt"]
+    },
+    "IntegrationConfig": {
+      "title": "IntegrationConfig",
+      "description": "Google Forms and Sheets workspace sync settings",
+      "type": "object",
+      "properties": {
+        "spreadsheetId": { "type": "string" },
+        "spreadsheetUrl": { "type": "string" },
+        "formId": { "type": "string" },
+        "formUrl": { "type": "string" },
+        "lastSyncedAt": { "type": "string" },
+        "totalSyncedRows": { "type": "number" }
+      }
+    },
+    "Executive": {
+      "title": "Executive",
+      "description": "Authorized Event Executive committee member permitted to access attendee records and data export tools",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "addedAt": { "type": "string" },
+        "isPrimary": { "type": "boolean" }
+      },
+      "required": ["email", "role"]
+    }
+  },
+  "firestore": {
+    "/registrations/{registrationId}": {
+      "schema": { "$ref": "#/entities/Registration" },
+      "description": "Attendee registrations"
+    },
+    "/inquiries/{inquiryId}": {
+      "schema": { "$ref": "#/entities/Inquiry" },
+      "description": "Secretariat contact inquiries"
+    },
+    "/integrations/{configId}": {
+      "schema": { "$ref": "#/entities/IntegrationConfig" },
+      "description": "Workspace integration settings"
+    },
+    "/executives/{userId}": {
+      "schema": { "$ref": "#/entities/Executive" },
+      "description": "Authorized Event Executive committee members"
+    }
+  }
+}

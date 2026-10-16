@@ -1,0 +1,80 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Administrator verification: requires verified Google email or admin claim
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'arnoldodjidja01@gmail.com' ||
+        request.auth.token.admin == true
+      );
+    }
+
+    // Attendee Registrations Collection
+    match /registrations/{registrationId} {
+      // Allow read for authenticated backend sessions and registrant lookups
+      allow read: if isSignedIn();
+
+      // Validated registration creation
+      allow create: if isSignedIn()
+                    && request.resource.data.fullName is string
+                    && request.resource.data.fullName.size() >= 2
+                    && request.resource.data.fullName.size() <= 100
+                    && request.resource.data.phone is string
+                    && request.resource.data.phone.size() >= 7
+                    && request.resource.data.phone.size() <= 25
+                    && request.resource.data.passId is string;
+
+      // Allow updates for sync metadata, ticket status, and admin edits
+      allow update: if isSignedIn();
+
+      // Allow delete for authenticated administrative and backend sessions
+      allow delete: if isSignedIn();
+    }
+
+    // Secretariat Contact Inquiries Collection
+    match /inquiries/{inquiryId} {
+      // Validated inquiry creation
+      allow create: if isSignedIn()
+                    && request.resource.data.fullName is string
+                    && request.resource.data.fullName.size() >= 2
+                    && request.resource.data.email is string
+                    && request.resource.data.message is string
+                    && request.resource.data.message.size() >= 5;
+
+      // Reading, updating, and deleting inquiries for authenticated secretariat sessions
+      allow read, update, delete: if isSignedIn();
+    }
+
+    // Executive Committee Roster & Settings: Public read, authenticated write
+    match /executives/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    // Workspace & Sheets Integration Settings, Locks & Queues
+    match /integrations/{configId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Unique Phone Indices Collection (Atomic reservation index for registrations)
+    match /phone_indices/{indexId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Diagnostic & test documents: Denied by default
+    match /test/{docId} {
+      allow read, write: if false;
+    }
+
+    // Default deny for unmatched collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
