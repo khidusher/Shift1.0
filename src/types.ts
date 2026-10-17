@@ -70,3 +70,7 @@ export interface EventExecutive {
   isPrimary?: boolean;
 }
 
+declare global {
+  const __APP_ADMIN_PASSCODE__: string | undefined;
+}
+
