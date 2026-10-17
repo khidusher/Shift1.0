@@ -90,6 +90,15 @@ export const signInWithGoogleForSheets = async (): Promise<{ user: User; accessT
       console.warn('[Google OAuth] Popup closed or cancelled by user:', errorCode);
       throw err;
     }
+
+    if (errorCode === 'auth/unauthorized-domain' || err?.message?.includes('unauthorized-domain')) {
+      const hostname = typeof window !== 'undefined' ? window.location.hostname : 'current domain';
+      const friendlyErr = new Error(`Domain "${hostname}" is not authorized for Google Sign-In in Firebase Console.`);
+      (friendlyErr as any).code = 'auth/unauthorized-domain';
+      (friendlyErr as any).domain = hostname;
+      throw friendlyErr;
+    }
+
     console.warn('[Google OAuth] Sign-in notice:', err?.message || err);
     throw err;
   } finally {
@@ -160,17 +169,17 @@ export const PRIMARY_EXECUTIVE_EMAIL = 'arnoldodjidja01@gmail.com';
 // Authorized SHA-256 hashes for secretariat passcode access
 export const AUTHORIZED_PASSCODE_HASHES: string[] = [
   '70e0ddc68d702e4a9868983e488870b156506a524522fefcdd6e64c20070fa13',
-  '1587d65f385ada921f8734dcb58e25df5017e6b75d1319db0f1cde9d8ff9617e', // shift-admin-2026
-  'f44d8309c4737d6224da6751e6dd81f2e20e6b4bc298c6eafc86125eeb4c1c5a', // shift2026
-  '843c50e658fea0b611f2a4153fa5b50dc0d991a70255b14df55692759f81ef57', // SHIFT2026
-  '20df4541c29041aa3314c4a2b02b40c956400dbb6c1e83b752432e68da218ffa', // Shift@2026
-  'b96624571b8e9a72563b6281c8ac2388c60b6ea64a859494f1dfb68e86065c65', // Shift1.0@2026
-  '5658877ada9a80d3f4af672acd1f6e8fb404cdaa85b3f9a1a31c35aadec530f4', // secretariat2026
-  '72c580889606883ca9710342aefb03b33b95a1e5a9bda4f9efa878b1ea766f73', // Secretariat2026
-  '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9', // admin123
-  'e85fa5358db48ef8675331ef122b87f78e817d4c3ecc67ffdbea051547ccaac1', // shift1234
-  'aab9985ce260863eb5bab583eb7ff182b041e4de60ac1061bb27c6c56d29578b', // shift1.0
-  '3ccb9afca48f380e78d984ebc77a885aa898b33f72825210e6b989bc246db4ca', // shift10beyond
+  '1587d65f385ada921f8734dcb58e25df5017e6b75d1319db0f1cde9d8ff9617e',
+  'f44d8309c4737d6224da6751e6dd81f2e20e6b4bc298c6eafc86125eeb4c1c5a',
+  '843c50e658fea0b611f2a4153fa5b50dc0d991a70255b14df55692759f81ef57',
+  '20df4541c29041aa3314c4a2b02b40c956400dbb6c1e83b752432e68da218ffa',
+  'b96624571b8e9a72563b6281c8ac2388c60b6ea64a859494f1dfb68e86065c65',
+  '5658877ada9a80d3f4af672acd1f6e8fb404cdaa85b3f9a1a31c35aadec530f4',
+  '72c580889606883ca9710342aefb03b33b95a1e5a9bda4f9efa878b1ea766f73',
+  '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9',
+  'e85fa5358db48ef8675331ef122b87f78e817d4c3ecc67ffdbea051547ccaac1',
+  'aab9985ce260863eb5bab583eb7ff182b041e4de60ac1061bb27c6c56d29578b',
+  '3ccb9afca48f380e78d984ebc77a885aa898b33f72825210e6b989bc246db4ca',
   '5a129ee8079a8ef7e3c37a0fb55dea9e07bf7f803c53e2825712996ab85b0ab7',
   '7405b9b46ca0e6f64ef73f574b46bf20a542581ac95dc13054323eaf5e5dd2dd',
   'c01bcc50d71519e1c8b154daf379f3be8392fa67abae2d316b6e95026610992a',
@@ -194,39 +203,25 @@ async function hashPasscode(passcode: string): Promise<string> {
 }
 
 /**
- * Verifies passcode locally for static/Vercel environments
+ * Verifies passcode locally for static/Vercel environments using cryptographic hash comparison
  */
 export async function verifyPasscodeLocally(passcode: string): Promise<boolean> {
   const clean = passcode.trim();
   if (!clean) return false;
 
-  // 1. Direct match with configured build-time env passcode if provided
-  const configuredEnvPasscode =
-    (typeof __APP_ADMIN_PASSCODE__ !== 'undefined' ? __APP_ADMIN_PASSCODE__ : '') ||
-    ((import.meta as any).env?.VITE_ADMIN_PASSCODE as string) ||
-    '';
-  if (configuredEnvPasscode && clean === configuredEnvPasscode.trim()) {
-    return true;
-  }
-
-  // 2. Normalized common aliases
-  const normalized = clean.toLowerCase().replace(/[\s-_]/g, '');
-  const acceptedNormalized = [
-    'shiftadmin2026',
-    'shift2026',
-    'secretariat2026',
-    'admin123',
-    'shift10',
-    'shift10beyond',
-    'shift1234'
-  ];
-  if (acceptedNormalized.includes(normalized)) {
-    return true;
-  }
-
-  // 3. Web Crypto SHA-256 hash match against authorized hashes
   const hash = await hashPasscode(clean);
-  if (hash && AUTHORIZED_PASSCODE_HASHES.includes(hash)) {
+  if (!hash) return false;
+
+  // 1. Match against configured build-time env hash if provided
+  const configuredEnvHash =
+    (typeof __APP_ADMIN_PASSCODE_HASH__ !== 'undefined' ? __APP_ADMIN_PASSCODE_HASH__ : '') ||
+    '';
+  if (configuredEnvHash && hash === configuredEnvHash) {
+    return true;
+  }
+
+  // 2. Cryptographic SHA-256 hash match against authorized hashes
+  if (AUTHORIZED_PASSCODE_HASHES.includes(hash)) {
     return true;
   }
 

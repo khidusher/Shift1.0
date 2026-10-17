@@ -71,6 +71,6 @@ export interface EventExecutive {
 }
 
 declare global {
-  const __APP_ADMIN_PASSCODE__: string | undefined;
+  const __APP_ADMIN_PASSCODE_HASH__: string | undefined;
 }
 

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { loginAdminWithServer, PRIMARY_EXECUTIVE_EMAIL } from '../lib/firebase';
-import { Lock, Eye, EyeOff, X, ArrowRight, ShieldCheck, AlertCircle, Loader2, KeyRound } from 'lucide-react';
+import { Lock, Eye, EyeOff, X, ArrowRight, ShieldCheck, AlertCircle, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface AdminAuthModalProps {
@@ -68,7 +68,12 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
       }
     } catch (err: any) {
       if (err?.code !== 'auth/popup-closed-by-user' && err?.code !== 'auth/cancelled-popup-request') {
-        setError(err.message || 'Google Sign-In failed.');
+        if (err?.code === 'auth/unauthorized-domain' || err?.message?.includes('unauthorized-domain')) {
+          const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'shift-wes.vercel.app';
+          setError(`Google Sign-In requires domain authorization for "${currentHost}" in Firebase Console. Please use your administrator passcode above to log in.`);
+        } else {
+          setError(err.message || 'Google Sign-In failed.');
+        }
       }
     } finally {
       setIsGoogleLoading(false);
@@ -124,26 +129,15 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
               )}
 
               <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300">
-                    Administrative Passcode
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setPasscode('shift-admin-2026')}
-                    className="text-[11px] text-sky-400 hover:text-sky-300 flex items-center gap-1 transition-colors cursor-pointer"
-                    title="Click to fill default event passcode"
-                  >
-                    <KeyRound className="w-3 h-3" />
-                    <span>Use default: shift-admin-2026</span>
-                  </button>
-                </div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-1.5">
+                  Administrative Passcode
+                </label>
                 <div className="relative">
                   <input
                     type={showPasscode ? 'text' : 'password'}
                     value={passcode}
                     onChange={(e) => setPasscode(e.target.value)}
-                    placeholder="e.g. shift-admin-2026"
+                    placeholder="Enter security passcode..."
                     autoFocus
                     className="w-full px-4 py-3 bg-[#0B132B] border border-slate-700 rounded-xl text-white text-sm placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 pr-11 font-mono tracking-wider"
                   />
@@ -156,9 +150,6 @@ export const AdminAuthModal: React.FC<AdminAuthModalProps> = ({
                     {showPasscode ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
-                <p className="text-[11px] text-slate-400 mt-1.5">
-                  Default passcode: <code className="text-sky-300 bg-slate-900 px-1.5 py-0.5 rounded font-mono">shift-admin-2026</code> (or your custom <code className="text-slate-300">ADMIN_PASSCODE</code>)
-                </p>
               </div>
 
               <button

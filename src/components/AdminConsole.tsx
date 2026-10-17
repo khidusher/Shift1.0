@@ -48,7 +48,8 @@ import {
   ExternalLink,
   ShieldCheck,
   Check,
-  Copy
+  Copy,
+  X
 } from 'lucide-react';
 
 interface AdminConsoleProps {
@@ -160,7 +161,11 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   const [sheetsConfig, setSheetsConfig] = useState<any>(null);
   const [isSyncingAll, setIsSyncingAll] = useState(false);
   const [syncingPassId, setSyncingPassId] = useState<string | null>(null);
-  const [syncNotice, setSyncNotice] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const [syncNotice, setSyncNotice] = useState<{
+    type: 'success' | 'error' | 'info' | 'domain_auth_required';
+    message: string;
+    domain?: string;
+  } | null>(null);
   const [isGuideModalOpen, setIsGuideModalOpen] = useState(false);
   const [copiedText, setCopiedText] = useState(false);
   const [googleUserEmail, setGoogleUserEmail] = useState<string | null>(null);
@@ -205,10 +210,19 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       });
     } catch (err: any) {
       if (err?.code !== 'auth/popup-closed-by-user' && err?.code !== 'auth/cancelled-popup-request') {
-        setSyncNotice({
-          type: 'error',
-          message: err.message || 'Failed to connect Google account.'
-        });
+        if (err?.code === 'auth/unauthorized-domain' || err?.message?.includes('unauthorized-domain')) {
+          const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'shift-wes.vercel.app';
+          setSyncNotice({
+            type: 'domain_auth_required',
+            domain: currentHost,
+            message: `Domain "${currentHost}" is not yet authorized in Firebase Console.`
+          });
+        } else {
+          setSyncNotice({
+            type: 'error',
+            message: err.message || 'Failed to connect Google account.'
+          });
+        }
       }
     } finally {
       setIsConnectingGoogle(false);
@@ -242,6 +256,16 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
           }
         } catch (oauthErr: any) {
           if (oauthErr?.code === 'auth/popup-closed-by-user' || oauthErr?.code === 'auth/cancelled-popup-request') {
+            setIsSyncingAll(false);
+            return;
+          }
+          if (oauthErr?.code === 'auth/unauthorized-domain' || oauthErr?.message?.includes('unauthorized-domain')) {
+            const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'shift-wes.vercel.app';
+            setSyncNotice({
+              type: 'domain_auth_required',
+              domain: currentHost,
+              message: `Domain "${currentHost}" is not yet authorized in Firebase Console.`
+            });
             setIsSyncingAll(false);
             return;
           }
@@ -1036,7 +1060,86 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
             </div>
 
             {/* Sync Notice Alert */}
-            {syncNotice && (
+            {syncNotice && syncNotice.type === 'domain_auth_required' ? (
+              <div className="p-4 rounded-xl bg-amber-950/70 border border-amber-600/80 text-amber-200 text-xs shadow-lg space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="font-bold text-sm text-amber-300">
+                        Firebase Authentication: Domain Authorization Required
+                      </h4>
+                      <p className="text-slate-300 mt-1 leading-relaxed text-xs">
+                        Google Sign-In was blocked because your deployment domain <code className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-amber-300 font-mono font-bold">{syncNotice.domain || (typeof window !== 'undefined' ? window.location.hostname : 'shift-wes.vercel.app')}</code> has not been added to your Firebase project&apos;s authorized domains.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setSyncNotice(null)}
+                    className="text-slate-400 hover:text-white font-bold p-1 cursor-pointer shrink-0"
+                    aria-label="Dismiss alert"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="bg-slate-900/90 rounded-lg p-3 border border-slate-800 space-y-2 text-[12px] text-slate-300">
+                  <p className="font-semibold text-white">
+                    Quick 30-Second Fix in Firebase Console:
+                  </p>
+                  <ol className="list-decimal list-inside space-y-1 text-slate-300 ml-1">
+                    <li>
+                      Open{' '}
+                      <a
+                        href="https://console.firebase.google.com/project/gen-lang-client-0675065246/authentication/settings"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sky-400 hover:text-sky-300 underline font-semibold inline-flex items-center gap-1"
+                      >
+                        Firebase Console &gt; Authentication &gt; Settings
+                        <ExternalLink className="w-3 h-3 inline" />
+                      </a>
+                    </li>
+                    <li>Scroll down to the <strong className="text-white">Authorized domains</strong> section</li>
+                    <li>Click <strong className="text-white">Add domain</strong></li>
+                    <li>
+                      Enter <code className="px-1 py-0.5 rounded bg-slate-800 text-amber-300 font-mono">{syncNotice.domain || 'shift-wes.vercel.app'}</code> (and/or <code className="px-1 py-0.5 rounded bg-slate-800 text-amber-300 font-mono">vercel.app</code>) and click <strong className="text-white">Save</strong>
+                    </li>
+                    <li>Return here and click <strong className="text-white">Connect Google</strong> again!</li>
+                  </ol>
+                  <div className="pt-1 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const host = syncNotice.domain || (typeof window !== 'undefined' ? window.location.hostname : 'shift-wes.vercel.app');
+                        navigator.clipboard.writeText(host);
+                        setCopiedText(true);
+                        setTimeout(() => setCopiedText(false), 2000);
+                      }}
+                      className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Copy className="w-3 h-3 text-sky-400" />
+                      <span>{copiedText ? 'Copied Domain!' : 'Copy Domain to Clipboard'}</span>
+                    </button>
+                    <a
+                      href="https://console.firebase.google.com/project/gen-lang-client-0675065246/authentication/settings"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 py-1 rounded bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
+                    >
+                      <span>Open Firebase Console Settings</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                </div>
+
+                <div className="pt-1 text-[11px] text-slate-400 border-t border-amber-900/40">
+                  <span>
+                    💡 <strong>Alternative:</strong> You can also use <strong className="text-slate-300">AppSheet Mobile Hub</strong> below for direct Cloud Firestore sync with zero domain configuration, or click <strong className="text-slate-300">Export CSV Roster</strong> above.
+                  </span>
+                </div>
+              </div>
+            ) : syncNotice ? (
               <div
                 className={`p-3 rounded-lg text-xs flex items-center justify-between gap-2 border ${
                   syncNotice.type === 'success'
@@ -1052,7 +1155,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                   ✕
                 </button>
               </div>
-            )}
+            ) : null}
 
             {/* Google AppSheet Mobile Sync Hub */}
             <AppSheetIntegrationCard
