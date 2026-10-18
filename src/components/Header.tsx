@@ -143,7 +143,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <UserCheck className="w-4 h-4 text-sky-400" />
                 REGISTER
               </span>
-              <span className="text-xs text-emerald-400 font-semibold">{500 - claimedSeats} seats left</span>
+              <span className="text-xs text-emerald-400 font-semibold">{Math.max(0, 500 - claimedSeats)} seats left</span>
             </button>
 
             <button

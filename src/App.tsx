@@ -23,6 +23,48 @@ import {
   verifyTicketWithServer
 } from './lib/firebase';
 
+interface RouteInfo {
+  tab: NavTab;
+  passId?: string;
+  section?: string;
+}
+
+function parseCurrentRoute(): RouteInfo {
+  if (typeof window === 'undefined') return { tab: 'home' };
+
+  const pathname = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+  const searchParams = new URLSearchParams(window.location.search);
+
+  // Check query parameters (e.g. ?ticket=SHFT-... or ?passId=SHFT-...)
+  const queryPass = searchParams.get('ticket') || searchParams.get('passId') || searchParams.get('verify');
+  if (queryPass) {
+    return { tab: 'home', passId: queryPass.trim().toUpperCase() };
+  }
+
+  // Canonical path evaluation
+  if (pathname === '/admin' || pathname === '/secretariat') {
+    return { tab: 'admin' };
+  }
+  if (pathname === '/register' || pathname === '/registration') {
+    return { tab: 'register' };
+  }
+  if (pathname === '/contacts' || pathname === '/contact' || pathname === '/support') {
+    return { tab: 'contacts' };
+  }
+  if (pathname.startsWith('/ticket/') || pathname.startsWith('/verify/')) {
+    const rawId = pathname.replace(/^\/(ticket|verify)\//, '').trim();
+    return { tab: 'home', passId: rawId.toUpperCase() };
+  }
+  if (pathname === '/speakers') {
+    return { tab: 'home', section: 'speakers' };
+  }
+  if (pathname === '/schedule' || pathname === '/events') {
+    return { tab: 'home', section: 'events' };
+  }
+
+  return { tab: 'home' };
+}
+
 function MainApp() {
   // Navigation State
   const [activeTab, setActiveTab] = useState<NavTab>('home');
@@ -32,7 +74,7 @@ function MainApp() {
   const [ticketModalData, setTicketModalData] = useState<RegistrationData | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
-  // Seat Counter & Registrations State (Starts from 0, populated via live Firebase Firestore)
+  // Seat Counter & Registrations State (Starts clean from 0, populated via live Firestore)
   const [claimedSeats, setClaimedSeats] = useState<number>(0);
   const [allRegistrations, setAllRegistrations] = useState<RegistrationData[]>([]);
   const [isLoadingRegistrations, setIsLoadingRegistrations] = useState<boolean>(true);
@@ -51,7 +93,7 @@ function MainApp() {
     return () => unsubAuth();
   }, []);
 
-  // 2. Load stored local registrations if present
+  // Deduplicate registration list helper
   const deduplicateRegistrations = (list: RegistrationData[]): RegistrationData[] => {
     const seen = new Set<string>();
     return list.filter((r) => {
@@ -64,21 +106,75 @@ function MainApp() {
     });
   };
 
-  // 1. Initial local registrations cache load for instant zero-latency render
+  // 2. Demo data cleansing: purge test records and load true local cache
   useEffect(() => {
     try {
+      const demoPatterns = ['demo', 'sample', 'test', 'kwame mensah', 'shft-1234', 'shft-1042', 'john doe'];
+      const isDemoRecord = (r: RegistrationData) => {
+        if (!r) return true;
+        const name = (r.fullName || '').toLowerCase();
+        const email = (r.email || '').toLowerCase();
+        const passId = (r.passId || '').toLowerCase();
+        return demoPatterns.some((p) => name.includes(p) || email.includes(p) || passId.includes(p));
+      };
+
       const savedList = localStorage.getItem('shift1_all_registrations');
       if (savedList) {
         const parsed: RegistrationData[] = JSON.parse(savedList);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const deduped = deduplicateRegistrations(parsed);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed.filter((r) => !isDemoRecord(r));
+          const deduped = deduplicateRegistrations(cleaned);
           setAllRegistrations(deduped);
           setClaimedSeats(deduped.length);
+          localStorage.setItem('shift1_all_registrations', JSON.stringify(deduped));
+        }
+      }
+
+      const savedUserTicket = localStorage.getItem('shift1_user_registration');
+      if (savedUserTicket) {
+        const parsedUserTicket = JSON.parse(savedUserTicket);
+        if (parsedUserTicket && isDemoRecord(parsedUserTicket)) {
+          localStorage.removeItem('shift1_user_registration');
         }
       }
     } catch (e) {
-      console.warn('Local registrations read error:', e);
+      console.warn('Local storage read notice:', e);
     }
+  }, []);
+
+  // 3. Synchronize initial route from URL bar and register popstate listener
+  useEffect(() => {
+    const handleRoute = () => {
+      const route = parseCurrentRoute();
+      if (route.tab === 'admin') {
+        if (isAdminAuthenticated()) {
+          setActiveTab('admin');
+        } else {
+          setActiveTab('home');
+          setIsAuthModalOpen(true);
+        }
+      } else {
+        setActiveTab(route.tab);
+      }
+
+      if (route.passId) {
+        verifyTicketWithServer(route.passId).then((res) => {
+          if (res.valid && res.ticket) {
+            setTicketModalData(res.ticket as RegistrationData);
+          }
+        });
+      }
+
+      if (route.section) {
+        setTimeout(() => {
+          document.getElementById(route.section!)?.scrollIntoView({ behavior: 'smooth' });
+        }, 150);
+      }
+    };
+
+    handleRoute();
+    window.addEventListener('popstate', handleRoute);
+    return () => window.removeEventListener('popstate', handleRoute);
   }, []);
 
   // Manual refresh helper directly querying Firestore
@@ -99,9 +195,8 @@ function MainApp() {
     }
   };
 
-  // 3. Attendee registrations listener & capacity counter
+  // 4. Attendee registrations live listener & capacity counter
   useEffect(() => {
-    // Immediate capacity counter from public authoritative API
     fetchCapacity()
       .then((cap) => {
         if (cap && typeof cap.claimedSeats === 'number') {
@@ -127,26 +222,22 @@ function MainApp() {
     return () => unsubRegs();
   }, []);
 
-  // 4. Restore and authoritatively verify user's own ticket pass on device if saved previously
+  // 5. Restore user's own ticket pass on device if genuine and exists
   useEffect(() => {
     try {
       const savedTicket = localStorage.getItem('shift1_user_registration');
       if (savedTicket) {
         const parsed = JSON.parse(savedTicket);
         if (parsed && parsed.passId) {
-          console.info('[Local Pass] Verifying existing attendee pass with backend:', parsed.passId);
           verifyTicketWithServer(parsed.passId).then((res) => {
             if (res.valid && res.ticket) {
               const verifiedReg: RegistrationData = {
                 ...parsed,
-                ...res.ticket
+                ...(res.ticket as any)
               };
               localStorage.setItem('shift1_user_registration', JSON.stringify(verifiedReg));
-              console.info('[Local Pass] Authoritatively verified ticket pass with server');
             } else if (res.valid === false && res.error?.includes('not found')) {
-              // Stale ticket removed on server
               localStorage.removeItem('shift1_user_registration');
-              console.warn('[Local Pass] Stale pass removed from device storage');
             }
           });
         }
@@ -156,15 +247,21 @@ function MainApp() {
     }
   }, []);
 
+  // Reactive URL Navigation Handler
   const handleNavigate = (tab: NavTab) => {
     setActiveTab(tab);
+    if (typeof window !== 'undefined') {
+      const targetPath = tab === 'home' ? '/' : `/${tab}`;
+      if (window.location.pathname !== targetPath) {
+        window.history.pushState({ tab }, '', targetPath);
+      }
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleOpenAdmin = () => {
     if (isAdminAuthenticated()) {
-      setActiveTab('admin');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      handleNavigate('admin');
     } else {
       setIsAuthModalOpen(true);
     }
@@ -186,18 +283,16 @@ function MainApp() {
   };
 
   const handleScrollToRegister = () => {
-    setActiveTab('register');
+    handleNavigate('register');
     const elem = document.getElementById('register');
     if (elem) {
       elem.scrollIntoView({ behavior: 'smooth' });
-    } else {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
   const handleScrollToSpeakers = () => {
     if (activeTab !== 'home') {
-      setActiveTab('home');
+      handleNavigate('home');
       setTimeout(() => {
         document.getElementById('events')?.scrollIntoView({ behavior: 'smooth' });
       }, 100);
@@ -321,8 +416,7 @@ function MainApp() {
         onClose={() => setIsAuthModalOpen(false)}
         onSuccess={() => {
           setIsAuthModalOpen(false);
-          setActiveTab('admin');
-          window.scrollTo({ top: 0, behavior: 'smooth' });
+          handleNavigate('admin');
         }}
       />
 

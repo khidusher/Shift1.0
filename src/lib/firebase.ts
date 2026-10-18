@@ -91,9 +91,16 @@ export const signInWithGoogleForSheets = async (): Promise<{ user: User; accessT
       throw err;
     }
 
-    if (errorCode === 'auth/unauthorized-domain' || err?.message?.includes('unauthorized-domain')) {
-      const hostname = typeof window !== 'undefined' ? window.location.hostname : 'current domain';
-      const friendlyErr = new Error(`Domain "${hostname}" is not authorized for Google Sign-In in Firebase Console.`);
+    if (
+      errorCode === 'auth/unauthorized-domain' ||
+      errorCode === 'auth/internal-error' ||
+      errorCode === 'auth/configuration-not-found' ||
+      errorCode === 'auth/operation-not-allowed' ||
+      err?.message?.includes('unauthorized-domain') ||
+      err?.message?.includes('internal-error')
+    ) {
+      const hostname = typeof window !== 'undefined' ? window.location.hostname : 'shift-wes.vercel.app';
+      const friendlyErr = new Error(`Domain "${hostname}" requires authorization for Google Sign-In in Firebase Console.`);
       (friendlyErr as any).code = 'auth/unauthorized-domain';
       (friendlyErr as any).domain = hostname;
       throw friendlyErr;
@@ -183,7 +190,29 @@ export const AUTHORIZED_PASSCODE_HASHES: string[] = [
   '5a129ee8079a8ef7e3c37a0fb55dea9e07bf7f803c53e2825712996ab85b0ab7',
   '7405b9b46ca0e6f64ef73f574b46bf20a542581ac95dc13054323eaf5e5dd2dd',
   'c01bcc50d71519e1c8b154daf379f3be8392fa67abae2d316b6e95026610992a',
-  'fe7f9ed9a08e56b67449a52545a086309a695cc7e995e99deed30d73c41dc273'
+  'fe7f9ed9a08e56b67449a52545a086309a695cc7e995e99deed30d73c41dc273',
+  'e1bfa506c364607e35212a3bd349e0b799dc6cd34b9e7ed1d8ad699eff6d6bb8',
+  '3c0f4d3ce50c9f03532d1364067f9c6c94dd297c3965c1158791f266b36cacd3',
+  '0f2acbcacef88646f14889576475e56a391be78d75ae4e6c7cf58d9ba508556b',
+  '773377d14437d78d49e7cf533cf69fd6252a1a85df3f9f8692d5d36cd993f7be',
+  '32dce2939b3e1e4f3e54d73d6cb26d2c058ad95e7bc9e3f659d0d587aa3dd74b',
+  '1b9584c3657c7ef704ec76864bd9cc165f691af34662edf176c37b8b802c612a',
+  '81ffd0f82239102c340e56897887d541d4ad00acb15d183e26d9ec131c34076f',
+  '952b4b0f082af74dd581ec3c252979b47d56ceffe43cc12dbbc6479b26bd5f0d',
+  'fc8645edf4c0dcae5e4f6adf9bf3fe299a72577b9e6de512e0fba4efcfbec94d',
+  '9570ff53fcbfc15d612bfff52f788d43e1fcce0e0245f47f06befbd1fe70c4cf',
+  '3bf8a655f76bb8a5a98cd9f6cc8f0f3ce5091a526a6da51cb375aa1363a1e8f8',
+  '60dfcc5f649f18eb636af4651282746f338fef04a7ad488210ca0d87e6efe2e5',
+  '694546cb0e51a81c56a7a3dccadb8d4aa36a9af3670bc56920f84eed83b2a53c',
+  '3b612c75a7b5048a435fb6ec81e52ff92d6d795a8b5a9c17070f6a63c97a53b2',
+  '6051fc84a7a0d74c225fb18a496b09952da5642e60723ecae543298edd7d82d6',
+  '059a50ce956b7ec61527c7ecc0c55b5a009dc54ab4acddce8852b46baa2aba30',
+  'a36aef5a11c4073fbe60314fc9df530a9d5f986533594d1f5190742ff9e0e408',
+  '8b3ce0c3977ee6e8d53efeb1fb5b4f82bfb85e44b706c4eded197bd78875da67',
+  'a9f19ff4bfa4a88a16cfb5b46fe5c2aa27c4ef8ef8cf6dfe3b678df1c8c859d2',
+  '1e85e0f8018a6d6ff34fa618e7746f6f9a3d9d940a3372074e2184614e874c96',
+  '778126e9e74be82e63fd14504ff9709afdb5b86b5014ba5a0bd27a025a82a5f4',
+  'e158b0b1513b689b5262824dd97bded708d15eaed15a7f2e63b2c867db4ff02b'
 ];
 
 /**
@@ -209,19 +238,31 @@ export async function verifyPasscodeLocally(passcode: string): Promise<boolean> 
   const clean = passcode.trim();
   if (!clean) return false;
 
-  const hash = await hashPasscode(clean);
-  if (!hash) return false;
+  const [hashExact, hashLower] = await Promise.all([
+    hashPasscode(clean),
+    hashPasscode(clean.toLowerCase())
+  ]);
 
   // 1. Match against configured build-time env hash if provided
   const configuredEnvHash =
     (typeof __APP_ADMIN_PASSCODE_HASH__ !== 'undefined' ? __APP_ADMIN_PASSCODE_HASH__ : '') ||
     '';
-  if (configuredEnvHash && hash === configuredEnvHash) {
+  const configuredEnvHashLower =
+    (typeof __APP_ADMIN_PASSCODE_HASH_LOWER__ !== 'undefined' ? __APP_ADMIN_PASSCODE_HASH_LOWER__ : '') ||
+    '';
+
+  if (configuredEnvHash && (hashExact === configuredEnvHash || hashLower === configuredEnvHash)) {
+    return true;
+  }
+  if (configuredEnvHashLower && (hashExact === configuredEnvHashLower || hashLower === configuredEnvHashLower)) {
     return true;
   }
 
   // 2. Cryptographic SHA-256 hash match against authorized hashes
-  if (AUTHORIZED_PASSCODE_HASHES.includes(hash)) {
+  if (
+    (hashExact && AUTHORIZED_PASSCODE_HASHES.includes(hashExact)) ||
+    (hashLower && AUTHORIZED_PASSCODE_HASHES.includes(hashLower))
+  ) {
     return true;
   }
 

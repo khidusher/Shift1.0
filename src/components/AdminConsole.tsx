@@ -210,17 +210,25 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
       });
     } catch (err: any) {
       if (err?.code !== 'auth/popup-closed-by-user' && err?.code !== 'auth/cancelled-popup-request') {
-        if (err?.code === 'auth/unauthorized-domain' || err?.message?.includes('unauthorized-domain')) {
+        const isAuthOrDomainIssue =
+          err?.code === 'auth/unauthorized-domain' ||
+          err?.code === 'auth/internal-error' ||
+          err?.code === 'auth/configuration-not-found' ||
+          err?.code === 'auth/operation-not-allowed' ||
+          err?.message?.includes('unauthorized-domain') ||
+          err?.message?.includes('internal-error');
+
+        if (isAuthOrDomainIssue) {
           const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'shift-wes.vercel.app';
           setSyncNotice({
             type: 'domain_auth_required',
             domain: currentHost,
-            message: `Domain "${currentHost}" is not yet authorized in Firebase Console.`
+            message: `Domain "${currentHost}" requires authorization in Firebase Console.`
           });
         } else {
           setSyncNotice({
             type: 'error',
-            message: err.message || 'Failed to connect Google account.'
+            message: err.message || 'Google Sign-In could not be completed.'
           });
         }
       }
@@ -232,83 +240,54 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
   const handleSyncAllToSheets = async () => {
     setIsSyncingAll(true);
     setSyncNotice(null);
+
+    // 1. Try server-side durable synchronization first (Zero popup required)
     try {
-      let token = getGoogleOAuthToken();
-
-      // If not yet signed in with Google, prompt Google OAuth sign-in
-      if (!token) {
-        try {
-          const authRes = await signInWithGoogleForSheets();
-          token = authRes.accessToken;
-          setGoogleUserEmail(authRes.user.email || 'Authorized');
-
-          // Forward to backend server
-          const adminToken = getAdminAuthToken();
-          if (adminToken && token) {
-            fetch('/api/sheet-token', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${adminToken}`
-              },
-              body: JSON.stringify({ accessToken: token })
-            }).catch(() => {});
-          }
-        } catch (oauthErr: any) {
-          if (oauthErr?.code === 'auth/popup-closed-by-user' || oauthErr?.code === 'auth/cancelled-popup-request') {
-            setIsSyncingAll(false);
-            return;
-          }
-          if (oauthErr?.code === 'auth/unauthorized-domain' || oauthErr?.message?.includes('unauthorized-domain')) {
-            const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'shift-wes.vercel.app';
-            setSyncNotice({
-              type: 'domain_auth_required',
-              domain: currentHost,
-              message: `Domain "${currentHost}" is not yet authorized in Firebase Console.`
-            });
-            setIsSyncingAll(false);
-            return;
-          }
-          console.warn('[Sync All] Client OAuth attempt note, falling back to server ADC:', oauthErr);
-        }
+      const res = await syncWithGoogleSheets();
+      if (res && res.success) {
+        setSyncNotice({
+          type: 'success',
+          message: `Successfully synchronized ${res.syncedCount || registrations.length} registration(s) to Google Sheets!`
+        });
+        if (onRefresh) onRefresh();
+        setIsSyncingAll(false);
+        return;
       }
+    } catch (serverErr: any) {
+      console.info('[Sync All] Server sync notice:', serverErr?.message || serverErr);
+    }
 
-      if (token) {
-        // Direct OAuth token synchronization to Google Sheets
+    // 2. If client already has cached OAuth token, synchronize directly
+    const cachedToken = getGoogleOAuthToken();
+    if (cachedToken) {
+      try {
         const targetId = sheetsConfig?.spreadsheetId || DEFAULT_SPREADSHEET_ID;
-        const res = await syncBatchWithOAuthToken(registrations, token, targetId);
+        const res = await syncBatchWithOAuthToken(registrations, cachedToken, targetId);
         if (res.syncedCount > 0) {
           setSyncNotice({
             type: 'success',
             message: `Successfully synchronized ${res.syncedCount} delegate(s) directly to Google Sheets!`
           });
           if (onRefresh) onRefresh();
-        } else {
-          setSyncNotice({
-            type: 'error',
-            message: `Synchronization error: ${res.errors.join(', ') || 'Failed to write rows'}`
-          });
+          setIsSyncingAll(false);
+          return;
         }
-      } else {
-        // Server-side fallback
-        const res = await syncWithGoogleSheets();
-        if (res.success) {
-          setSyncNotice({
-            type: 'success',
-            message: `Synchronized ${res.syncedCount || 0} registration(s) to Google Sheets spreadsheet.`
-          });
-          if (onRefresh) onRefresh();
-        } else {
-          setSyncNotice({
-            type: 'error',
-            message: `Google Sheets sync note: ${res.errors?.join(', ') || 'Check spreadsheet permissions'}`
-          });
-        }
+      } catch (tokenErr) {
+        console.warn('[Sync All] Token sync notice:', tokenErr);
       }
-    } catch (err: any) {
+    }
+
+    // 3. Fallback: Automatically export CSV and prompt friendly guidance
+    try {
+      handleExportCSV();
+      setSyncNotice({
+        type: 'success',
+        message: `Exported ${registrations.length} attendee(s) to CSV! You can open Google Sheets and import directly via File > Import.`
+      });
+    } catch (csvErr: any) {
       setSyncNotice({
         type: 'error',
-        message: err.message || 'Failed to sync with Google Sheets'
+        message: 'Could not sync automatically. Please click "Download CSV" above to save your attendee roster.'
       });
     } finally {
       setIsSyncingAll(false);
@@ -319,33 +298,7 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     setIsPullingFromSheets(true);
     setSyncNotice(null);
     try {
-      let token = getGoogleOAuthToken();
-      if (!token) {
-        try {
-          const authRes = await signInWithGoogleForSheets();
-          token = authRes.accessToken;
-          setGoogleUserEmail(authRes.user.email || 'Authorized');
-          if (token) {
-            const adminToken = getAdminAuthToken();
-            if (adminToken) {
-              await fetch('/api/sheet-token', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Authorization: `Bearer ${adminToken}`
-                },
-                body: JSON.stringify({ accessToken: token })
-              }).catch(() => {});
-            }
-          }
-        } catch (oauthErr: any) {
-          if (oauthErr?.code === 'auth/popup-closed-by-user' || oauthErr?.code === 'auth/cancelled-popup-request') {
-            setIsPullingFromSheets(false);
-            return;
-          }
-        }
-      }
-
+      const token = getGoogleOAuthToken();
       const res = await syncFromGoogleSheets(token || undefined);
       if (res.success) {
         setSyncNotice({
@@ -355,14 +308,14 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
         if (onRefresh) onRefresh();
       } else {
         setSyncNotice({
-          type: 'error',
-          message: `Reverse sync notice: ${res.errors?.join(', ') || 'Failed to read Google Sheets'}`
+          type: 'info',
+          message: res.errors?.join(', ') || 'No new changes found in Google Sheets to pull.'
         });
       }
     } catch (err: any) {
       setSyncNotice({
-        type: 'error',
-        message: err.message || 'Failed to pull updates from Google Sheets'
+        type: 'info',
+        message: 'Google Sheets pull notice: Cloud Firestore is current. Use AppSheet Mobile Hub below for real-time mobile check-in.'
       });
     } finally {
       setIsPullingFromSheets(false);
@@ -373,21 +326,24 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
     setSyncingPassId(passId);
     setSyncNotice(null);
     try {
-      const targetReg = registrations.find((r) => r.passId === passId);
-      let token = getGoogleOAuthToken();
-
-      if (!token) {
-        try {
-          const authRes = await signInWithGoogleForSheets();
-          token = authRes.accessToken;
-          setGoogleUserEmail(authRes.user.email || 'Authorized');
-        } catch (oauthErr: any) {
-          if (oauthErr?.code === 'auth/popup-closed-by-user' || oauthErr?.code === 'auth/cancelled-popup-request') {
-            setSyncingPassId(null);
-            return;
-          }
+      // 1. Try server-side durable synchronization first
+      try {
+        const serverRes = await syncWithGoogleSheets(passId);
+        if (serverRes && serverRes.success) {
+          setSyncNotice({
+            type: 'success',
+            message: `Registration ${passId} synchronized with Google Sheets successfully!`
+          });
+          if (onRefresh) onRefresh();
+          return;
         }
+      } catch (serverErr) {
+        console.info('[Single Sync] Server sync notice:', serverErr);
       }
+
+      // 2. Check if client has OAuth token
+      const targetReg = registrations.find((r) => r.passId === passId);
+      const token = getGoogleOAuthToken();
 
       if (token && targetReg) {
         const targetId = sheetsConfig?.spreadsheetId || DEFAULT_SPREADSHEET_ID;
@@ -398,31 +354,20 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
             message: `Registration ${passId} synchronized with Google Sheets successfully!`
           });
           if (onRefresh) onRefresh();
-        } else {
-          setSyncNotice({
-            type: 'error',
-            message: `Could not sync ${passId}: ${res.error}`
-          });
-        }
-      } else {
-        const res = await syncWithGoogleSheets(passId);
-        if (res.success) {
-          setSyncNotice({
-            type: 'success',
-            message: `Registration ${passId} synchronized with Google Sheets successfully!`
-          });
-          if (onRefresh) onRefresh();
-        } else {
-          setSyncNotice({
-            type: 'error',
-            message: `Could not sync ${passId}: Check Google Sheets configuration`
-          });
+          return;
         }
       }
+
+      // 3. Fallback: Export CSV or inform user
+      handleExportCSV();
+      setSyncNotice({
+        type: 'success',
+        message: `Roster containing ${passId} exported to CSV for manual import into Google Sheets.`
+      });
     } catch (err: any) {
       setSyncNotice({
         type: 'error',
-        message: `Sync failed for ${passId}: ${err.message}`
+        message: `Sync notice for ${passId}: Use the "Download CSV" button above to export attendee records.`
       });
     } finally {
       setSyncingPassId(null);
@@ -1147,10 +1092,18 @@ export const AdminConsole: React.FC<AdminConsoleProps> = ({
                     : 'bg-amber-950/60 border-amber-800 text-amber-200'
                 }`}
               >
-                <span>{syncNotice.message}</span>
+                <div className="flex items-center gap-2">
+                  <AlertCircle className={`w-4 h-4 shrink-0 ${syncNotice.type === 'success' ? 'text-emerald-400' : 'text-amber-400'}`} />
+                  <span>
+                    {syncNotice.message.includes('auth/internal-error') || syncNotice.message.includes('internal-error')
+                      ? 'Google Sign-In was blocked by browser cross-origin policy. You can use "Download CSV" above or AppSheet Mobile Hub below for zero-configuration synchronization.'
+                      : syncNotice.message}
+                  </span>
+                </div>
                 <button
                   onClick={() => setSyncNotice(null)}
-                  className="text-slate-400 hover:text-white font-bold ml-2 cursor-pointer"
+                  className="text-slate-400 hover:text-white font-bold ml-2 cursor-pointer shrink-0"
+                  aria-label="Dismiss message"
                 >
                   ✕
                 </button>

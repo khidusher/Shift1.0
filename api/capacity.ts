@@ -7,10 +7,11 @@ export default async function handler(req: any, res: any) {
     return res.status(200).end();
   }
 
+  const totalCapacity = 500;
   return res.status(200).json({
-    totalCapacity: 120,
+    totalCapacity,
     claimedSeats: 0,
-    remainingSeats: 120,
+    remainingSeats: totalCapacity,
     status: 'available'
   });
 }
